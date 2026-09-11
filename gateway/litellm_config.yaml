@@ -1,0 +1,97 @@
+# LiteLLM Gateway Config — Context-Cost Protocol
+# Routes 3 complexity categories to Anthropic models via LiteLLM proxy.
+# Category selection is done by the middleware (X-Category header / body param)
+# which rewrites to the appropriate model alias below.
+
+model_list:
+  # ── CAT1: FAST — low complexity, cheap & quick ──────────────────────
+  - model_name: cat1-fast
+    litellm_params:
+      model: claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_tokens: 4096
+      # Haiku is ~0.25$/MTok input — used for summarization, classification
+    model_info:
+      id: cat1-fast-haiku
+      mode: completion
+
+  # ── CAT2: BALANCED — medium complexity, default ─────────────────────
+  - model_name: cat2-balanced
+    litellm_params:
+      model: claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_tokens: 8192
+    model_info:
+      id: cat2-balanced-sonnet
+      mode: completion
+
+  # ── CAT3: POWER — high complexity, reasoning & codegen ──────────────
+  - model_name: cat3-power
+    litellm_params:
+      model: claude-3-opus-20240229
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_tokens: 8192
+    model_info:
+      id: cat3-power-opus
+      mode: completion
+
+  # ── Aliases for direct Anthropic passthrough (fallback compat) ──────
+  - model_name: claude-3-5-haiku
+    litellm_params:
+      model: claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-3-opus
+    litellm_params:
+      model: claude-3-opus-20240229
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+# ── Router / Load-balancing ────────────────────────────────────────────
+router_settings:
+  routing_strategy: usage-based-routing-v2  # lowest TPM/RPM first
+  num_retries: 2
+  retry_strategy: exponential_backoff
+  timeout: 90
+  # Redis-based cooldown for rate-limited models
+  redis_host: os.environ/REDIS_HOST
+  redis_port: 6379
+  redis_password: os.environ/REDIS_PASSWORD
+
+# ── Fallback Chain ─────────────────────────────────────────────────────
+# If opus is overloaded -> sonnet -> haiku. Ensures availability.
+litellm_settings:
+  num_retries: 3
+  request_timeout: 90
+  fallbacks:
+    - cat3-power: ["cat2-balanced", "cat1-fast"]
+    - cat2-balanced: ["cat1-fast"]
+    - cat1-fast: ["cat2-balanced"]
+  # Context window fallback: if prompt > model limit, auto-route up
+  context_window_fallbacks:
+    - cat1-fast: ["cat2-balanced", "cat3-power"]
+    - cat2-balanced: ["cat3-power"]
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: 6379
+    password: os.environ/REDIS_PASSWORD
+    ttl: 3600  # 1h semantic cache for identical prompts
+
+# ── Caching ────────────────────────────────────────────────────────────
+# Semantic cache key = hash(model + messages). Saves cost on repeated calls.
+# Disabled for streaming (stream=true) — cached via middleware chunk store.
+
+# ── Budget / Rate Limits (LiteLLM native, secondary to on-chain cap) ──
+# Primary enforcement is the Solana PDA budget via middleware (402).
+# These are defense-in-depth soft limits per API key.
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  alerting: ["slack"]
+  alert_types: ["budget_alerts", "outage_alerts"]
+
+environment_variables:
+  ANTHROPIC_API_KEY: "os.environ/ANTHROPIC_API_KEY"

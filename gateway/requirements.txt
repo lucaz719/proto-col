@@ -1,0 +1,12 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+redis[asyncio]>=5.0.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+# Solana / Anchor — for on-chain log_execution proofs
+solana>=0.30.0
+anchorpy>=0.20.0
+solders>=0.21.0
+# Optional: accurate token counting (falls back to chars/4 heuristic if missing)
+tiktoken>=6.0.0
